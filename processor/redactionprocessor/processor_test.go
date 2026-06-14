@@ -7,6 +7,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -2365,4 +2366,73 @@ func TestDBObfuscationErrorInAttribute(t *testing.T) {
 	val, ok := outSpan.Attributes().Get("db.statement")
 	require.True(t, ok)
 	assert.Equal(t, "SELECT * FROM users WHERE id = ?", val.Str())
+}
+
+func TestDBObfuscationConcurrency(t *testing.T) {
+	cfg := &Config{
+		AllowAllKeys: true,
+		DBSanitizer: db.DBSanitizerConfig{
+			SQLConfig: db.SQLConfig{
+				Enabled:    true,
+				Attributes: []string{"db.statement"},
+			},
+			RedisConfig: db.RedisConfig{
+				Enabled:    true,
+				Attributes: []string{"db.statement"},
+			},
+		},
+	}
+
+	processor, err := newRedaction(t.Context(), cfg, zaptest.NewLogger(t))
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	numWorkers := 20
+	numIterations := 50
+
+	wg.Add(numWorkers)
+	for i := 0; i < numWorkers; i++ {
+		go func(workerID int) {
+			defer wg.Done()
+			for j := 0; j < numIterations; j++ {
+				inBatch := ptrace.NewTraces()
+				rs := inBatch.ResourceSpans().AppendEmpty()
+				ils := rs.ScopeSpans().AppendEmpty()
+				span := ils.Spans().AppendEmpty()
+				span.SetName("test-span")
+				span.SetKind(ptrace.SpanKindClient)
+
+				dbSystems := []string{"mysql", "postgresql", "redis"}
+				system := dbSystems[(workerID+j)%len(dbSystems)]
+				span.Attributes().PutStr("db.system", system)
+
+				var statement, expected string
+				if system == "redis" {
+					statement = "SET key:123 val"
+					expected = "SET key:123 ?"
+				} else {
+					statement = "SELECT * FROM users WHERE id = 123"
+					expected = "SELECT * FROM users WHERE id = ?"
+				}
+				span.Attributes().PutStr("db.statement", statement)
+
+				outTraces, err := processor.processTraces(context.Background(), inBatch)
+				if err != nil {
+					t.Errorf("error processing traces: %v", err)
+					return
+				}
+
+				outSpan := outTraces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+				val, ok := outSpan.Attributes().Get("db.statement")
+				if !ok {
+					t.Errorf("missing db.statement attribute")
+					return
+				}
+				if val.Str() != expected {
+					t.Errorf("expected %q, got %q", expected, val.Str())
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
 }

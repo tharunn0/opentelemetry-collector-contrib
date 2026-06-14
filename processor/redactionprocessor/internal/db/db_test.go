@@ -503,8 +503,7 @@ func TestObfuscateAttribute(t *testing.T) {
 				cfg.AllowFallbackWithoutSystem = true
 			}
 			o := NewObfuscator(cfg, zaptest.NewLogger(t))
-			o.DBSystem = tt.dbSystem
-			result, err := o.ObfuscateAttribute(tt.value, tt.key)
+			result, err := o.ObfuscateAttribute(tt.value, tt.key, tt.dbSystem)
 			if tt.wantErr {
 				assert.Error(t, err)
 				return

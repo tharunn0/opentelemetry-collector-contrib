@@ -16,7 +16,6 @@ type Obfuscator struct {
 	processAttributesEnabled   bool
 	logger                     *zap.Logger
 	allowFallbackWithoutSystem bool
-	DBSystem                   string
 }
 
 func createAttributes(attributes []string) map[string]bool {
@@ -159,12 +158,12 @@ func (o *Obfuscator) Obfuscate(s string) (string, error) {
 	return s, nil
 }
 
-func (o *Obfuscator) ObfuscateAttribute(attributeValue, attributeKey string) (string, error) {
+func (o *Obfuscator) ObfuscateAttribute(attributeValue, attributeKey, dbSystem string) (string, error) {
 	if !o.HasSpecificAttributes() {
 		return attributeValue, nil
 	}
 
-	if o.DBSystem == "" {
+	if dbSystem == "" {
 		if o.allowFallbackWithoutSystem {
 			return o.obfuscateSequentially(attributeValue, attributeKey)
 		}
@@ -172,7 +171,7 @@ func (o *Obfuscator) ObfuscateAttribute(attributeValue, attributeKey string) (st
 	}
 
 	for _, obfuscator := range o.obfuscators {
-		if !obfuscator.SupportsSystem(o.DBSystem) {
+		if !obfuscator.SupportsSystem(dbSystem) {
 			continue
 		}
 		if !obfuscator.ShouldProcessAttribute(attributeKey) {
